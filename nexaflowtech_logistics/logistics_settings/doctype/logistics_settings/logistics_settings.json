@@ -1,0 +1,86 @@
+{
+ "actions": [],
+ "creation": "2024-05-22 10:00:00.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "enable_delhivery",
+  "delhivery_section",
+  "client_id",
+  "api_token",
+  "base_url",
+  "warehouse_details_section",
+  "warehouse_name",
+  "pickup_location"
+ ],
+ "fields": [
+  {
+   "fieldname": "enable_delhivery",
+   "fieldtype": "Check",
+   "label": "Enable Delhivery"
+  },
+  {
+   "fieldname": "delhivery_section",
+   "fieldtype": "Section Break",
+   "label": "Delhivery Configuration"
+  },
+  {
+   "fieldname": "client_id",
+   "fieldtype": "Data",
+   "label": "Client ID",
+   "reqd": 1
+  },
+  {
+   "fieldname": "api_token",
+   "fieldtype": "Password",
+   "label": "API Token",
+   "reqd": 1
+  },
+  {
+   "default": "https://track.delhivery.com",
+   "fieldname": "base_url",
+   "fieldtype": "Data",
+   "label": "Base URL",
+   "reqd": 1
+  },
+  {
+   "fieldname": "warehouse_details_section",
+   "fieldtype": "Section Break",
+   "label": "Warehouse Details"
+  },
+  {
+   "fieldname": "warehouse_name",
+   "fieldtype": "Data",
+   "label": "Warehouse Name",
+   "description": "Name of the warehouse registered with Delhivery"
+  },
+  {
+   "fieldname": "pickup_location",
+   "fieldtype": "Data",
+   "label": "Pickup Location",
+   "description": "Exact pickup location name as per Delhivery dashboard"
+  }
+ ],
+ "issingle": 1,
+ "links": [],
+ "modified": "2024-05-22 10:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Nexaflowtech Logistics",
+ "name": "Logistics Settings",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}
