@@ -27,7 +27,10 @@ app_license = "mit"
 # page_js = {"page" : "public/js/file.js"}
 
 # include js in doctype views
-# doctype_js = {"doctype" : "public/js/doctype.js"}
+doctype_js = {
+	"Delivery Note": "public/js/delivery_note.js",
+	"Sales Order": "public/js/sales_order.js"
+}
 # doctype_list_js = {"doctype" : "public/js/doctype_list.js"}
 # doctype_tree_js = {"doctype" : "public/js/doctype_tree.js"}
 # doctype_calendar_js = {"doctype" : "public/js/doctype_calendar.js"}
@@ -123,8 +126,8 @@ app_license = "mit"
 
 doc_events = {
 	"Sales Order": {
-		"on_submit": "nexaflowtech_logistics.nexaflowtech_logistics.events.sales_order.on_submit",
-		"on_cancel": "nexaflowtech_logistics.nexaflowtech_logistics.events.sales_order.on_cancel"
+		"on_submit": "nexaflowtech_logistics.events.sales_order.on_submit",
+		"on_cancel": "nexaflowtech_logistics.events.sales_order.on_cancel"
 	}
 }
 
@@ -133,7 +136,7 @@ doc_events = {
 
 scheduler_events = {
 	"hourly": [
-		"nexaflowtech_logistics.tasks.check_shipment_status"
+		"nexaflowtech_logistics.background_jobs.update_tracking_status"
 	],
 }
 

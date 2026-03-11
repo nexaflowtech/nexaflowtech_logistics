@@ -1,0 +1,114 @@
+{
+    "actions": [],
+    "creation": "2024-03-01 12:00:00.000000",
+    "doctype": "DocType",
+    "engine": "InnoDB",
+    "field_order": [
+        "section_break_g4lz",
+        "sales_order",
+        "status",
+        "awb_number",
+        "column_break_kwpa",
+        "creation_time",
+        "error_message",
+        "section_break_request",
+        "request_payload",
+        "section_break_response",
+        "response_payload"
+    ],
+    "fields": [
+        {
+            "fieldname": "section_break_g4lz",
+            "fieldtype": "Section Break"
+        },
+        {
+            "fieldname": "sales_order",
+            "fieldtype": "Link",
+            "label": "Sales Order",
+            "options": "Sales Order",
+            "read_only": 1,
+            "in_list_view": 1
+        },
+        {
+            "fieldname": "status",
+            "fieldtype": "Select",
+            "label": "Status",
+            "options": "Success\nError",
+            "read_only": 1,
+            "in_list_view": 1,
+            "in_standard_filter": 1
+        },
+        {
+            "fieldname": "awb_number",
+            "fieldtype": "Data",
+            "label": "AWB Number",
+            "read_only": 1
+        },
+        {
+            "fieldname": "column_break_kwpa",
+            "fieldtype": "Column Break"
+        },
+        {
+            "fieldname": "creation_time",
+            "fieldtype": "Datetime",
+            "label": "Creation Time",
+            "default": "Today",
+            "read_only": 1
+        },
+        {
+            "fieldname": "error_message",
+            "fieldtype": "Small Text",
+            "label": "Error Message",
+            "read_only": 1
+        },
+        {
+            "fieldname": "section_break_request",
+            "fieldtype": "Section Break",
+            "label": "Request Details"
+        },
+        {
+            "fieldname": "request_payload",
+            "fieldtype": "Code",
+            "label": "Request Payload",
+            "options": "JSON",
+            "read_only": 1
+        },
+        {
+            "fieldname": "section_break_response",
+            "fieldtype": "Section Break",
+            "label": "Response Details"
+        },
+        {
+            "fieldname": "response_payload",
+            "fieldtype": "Code",
+            "label": "Response Payload",
+            "options": "JSON",
+            "read_only": 1
+        }
+    ],
+    "index_web_pages_for_search": 1,
+    "links": [],
+    "modified": "2024-03-01 12:00:00.000000",
+    "modified_by": "Administrator",
+    "module": "Nexaflowtech Logistics",
+    "name": "Delivery Log",
+    "owner": "Administrator",
+    "permissions": [
+        {
+            "create": 1,
+            "delete": 1,
+            "email": 1,
+            "export": 1,
+            "print": 1,
+            "read": 1,
+            "report": 1,
+            "role": "System Manager",
+            "share": 1,
+            "write": 1
+        }
+    ],
+    "sort_field": "creation",
+    "sort_order": "DESC",
+    "states": [],
+    "track_changes": 1
+}
