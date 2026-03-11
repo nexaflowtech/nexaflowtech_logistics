@@ -9,166 +9,315 @@ class DelhiveryService:
 		if not self.settings.enable_delhivery:
 			frappe.throw(_("Delhivery integration is disabled in Logistics Settings"))
 		
-		self.client_id = self.settings.client_id
+		# User specified no client_id, and provided strict curl example for token
 		self.api_token = self.settings.get_password("api_token")
-		self.base_url = self.settings.base_url
+		self.base_url = self.settings.base_url or "https://track.delhivery.com"
 		self.warehouse_name = self.settings.warehouse_name
 		self.pickup_location = self.settings.pickup_location
 
-	def create_shipment(self, doc):
+	def create_shipment(self, doc, dimensions=None):
 		"""
-		Create a shipment in Delhivery for the given Sales Order document.
+		Create a shipment in Delhivery using the strictly formatted payload.
+		Endpoint: /api/cmu/create.json
+		Payload: format=json&data={JSON}
+		For Delivery Note, dimensions must contain shipment_width, shipment_height, weight (grams).
 		"""
-		# Updated endpoint as per user request
 		url = f"{self.base_url}/api/cmu/create.json"
 		
-		payload = self._prepare_shipment_payload(doc)
-		# User request shows 'Authorization: Token XXXXXX'
+		# Prepare payload (dimensions required when doc is Delivery Note)
+		try:
+			payload_data = self._prepare_shipment_payload(doc, dimensions)
+		except Exception as e:
+			frappe.log_error(f"Payload Creation Error: {str(e)}", "Delhivery Integration")
+			return {"success": False, "error": f"Payload Error: {str(e)}"}
+
+		# Headers as per user request
 		headers = {
-			"Authorization": f"Token {self.api_token}",
-			"Content-Type": "application/json",
-			"Accept": "application/json"
+			"Authorization": f"Token {self.api_token}"
 		}
 		
-		try:
-			# fl=true is often used in Delhivery to flatten response, but not in user curl
-			# The user curl uses --data 'format=json&data={...}'
-			# We will replicate this structure
-			
-			data_payload = {
-				"format": "json",
-				"data": json.dumps(payload)
-			}
+		# The API expects 'format=json' and 'data=<json_string>'
+		body = {
+			"format": "json",
+			"data": json.dumps(payload_data)
+		}
 
-			response = requests.post(url, data=data_payload, headers=headers)
-			response.raise_for_status()
-			data = response.json()
-			
-			# Check for success in the response structure
-			# The response structure might vary, but typically it returns a list of packages or a success flag
-			if data.get("success") or data.get("packages"):
-				packages = data.get("packages", [])
-				if packages:
-					# Assuming the first package has the waybill
-					awb = packages[0].get("waybill")
-					return {
-						"success": True,
-						"awb": awb,
-						"courier": "Delhivery",
-						"status": "Booked",
-						"response": data
-					}
-				elif data.get("upload_wbn"): # Some APIs return this
-					return {
-						"success": True,
-						"awb": data.get("upload_wbn"),
-						"courier": "Delhivery",
-						"status": "Booked",
-						"response": data
-					}
-				else:
-					return {
-						"success": False,
-						"error": "No waybill returned in response",
-						"response": data
-					}
+		# log entry init
+		log_status = "Error"
+		error_msg = ""
+		awb = None
+		response_data = None
+
+		try:
+			response = requests.post(url, data=body, headers=headers)
+			# standard requests check
+			# Note: Delhivery might return 200 even for logical errors, handled below.
+			if response.status_code != 200:
+				error_msg = f"HTTP Error {response.status_code}: {response.text}"
 			else:
-				# Attempt to extract error message
-				error_msg = data.get("rmk") or data.get("error") or "Unknown error from Delhivery"
-				return {
-					"success": False,
-					"error": error_msg,
-					"response": data
-				}
+				response_data = response.json()
+				
+				# Check for success based on typical Delhivery CMU response
+				# We ONLY want 'packages' with 'waybill'.
+				# 'upload_wbn' is the upload ID, NOT the AWB. ignoring it.
+				
+				if response_data.get("packages") and len(response_data.get("packages")) > 0:
+					package = response_data.get("packages")[0]
+					
+					# explicit check for 'waybill'
+					if package.get("waybill"):
+						awb = package.get("waybill")
+						# Check if it looks like a UPL ID (just in case API changes behavior, but UPL is usually 'upload_wbn')
+						if awb.startswith("UPL"):
+							# If the API incorrectly put the upload ID in waybill field (unlikely but possible based on user report)
+							# we treat it as failure/pending. But user says "actual look like this but in set field look like this UPL..."
+							# This implies we were grabbing wrong field previously.
+							pass 
+						else:
+							log_status = "Success"
+					else:
+						# Success=True but no waybill in package?
+						error_msg = package.get("remarks") or "No waybill generated."
+				
+				else:
+					# No packages returned. Check for top-level error
+					error_msg = response_data.get("rmk") or response_data.get("error") or "Unknown error from Delhivery."
+					if not error_msg and response_data.get("success"):
+						# Case where success=True but no packages. Async upload? structure mismatch?
+						# User requested "Pending AWB" state here.
+						log_status = "Pending"
+						error_msg = "Order Uploaded. Awaiting AWB generation."
 
 		except Exception as e:
-			frappe.log_error(f"Delhivery Shipment Creation Failed: {str(e)}", "Delhivery Integration")
+			error_msg = str(e)
+			frappe.log_error(f"Delhivery Shipment Network Error: {str(e)}", "Delhivery Integration")
+
+		# Create Delivery Log (use order ref for logging: SO name when from DN, else doc.name)
+		order_ref = self._get_order_reference(doc)
+		self._create_delivery_log(order_ref, payload_data, response_data, log_status, awb, error_msg)
+
+		if log_status == "Success":
+			return {
+				"success": True,
+				"awb": awb,
+				"courier": "Delhivery",
+				"status": "Booked",
+				"response": response_data
+			}
+		elif log_status == "Pending":
+			return {
+				"success": True,
+				"awb": None,
+				"courier": "Delhivery",
+				"status": "Pending AWB",
+				"response": response_data
+			}
+		else:
 			return {
 				"success": False,
-				"error": str(e)
+				"error": error_msg,
+				"response": response_data
 			}
 
-	def _prepare_shipment_payload(self, doc):
+	def sync_shipment(self, doc):
 		"""
-		Prepare the JSON payload for Delhivery Shipment.
+		Check status of a shipment by Reference ID (Order Name) to get the AWB.
+		Endpoint: /api/v1/packages/json/?ref_ids=<ORDER_NAME>
+		For Delivery Note, ref_id is the Sales Order from against_sales_order.
 		"""
-		if not doc.shipping_address_name:
-			frappe.throw(_("Shipping Address is missing in Sales Order"))
-			
-		address = frappe.get_doc("Address", doc.shipping_address_name)
-		
-		# Calc total weight
-		total_weight_grams = 0
-		for item in doc.items:
-			# weight_per_unit assumed in kg, convert to grams
-			weight = (item.weight_per_unit or 0.5) * item.qty
-			total_weight_grams += weight * 1000
-			
-		# Prepare payload matching user's structure
-		shipment_data = {
-			"shipments": [
-				{
-					"name": doc.customer_name,
-					"add": address.address_line1 + " " + (address.address_line2 or ""),
-					"pin": address.pincode,
-					"city": address.city,
-					"state": address.state,
-					"country": address.country if address.country else "India",
-					"phone": address.phone or doc.contact_phone,
-					"order": doc.name,
-					"payment_mode": "COD" if "COD" in (doc.payment_terms_template or "") else "Prepaid",
-					"return_pin": "",
-					"return_city": "",
-					"return_phone": "",
-					"return_add": "",
-					"return_state": "",
-					"return_country": "",
-					"products_desc": "Shipment for " + doc.name,
-					"hsn_code": "",
-					"cod_amount": str(doc.rounded_total) if "COD" in (doc.payment_terms_template or "") else "",
-					"order_date": str(doc.transaction_date) if doc.transaction_date else None,
-					"total_amount": str(doc.rounded_total),
-					"seller_add": self.pickup_location,
-					"seller_name": self.warehouse_name,
-					"seller_inv": "",
-					"quantity": str(int(doc.total_qty)),
-					"waybill": "",
-					"shipment_width": "100", # Default or fetch from settings/item
-					"shipment_height": "100",
-					"weight": str(int(total_weight_grams)),
-					"shipping_mode": "Surface",
-					"address_type": ""
-				}
-			],
-			"pickup_location": {
-				"name": self.warehouse_name # Matching "warehouse_name" in user example
-			}
-		}
-		return shipment_data
-
-	def track_shipment(self, awb):
-		# User provided: https://staging-express.delhivery.com/api/v1/packages/json/?waybill=...&ref_ids=
 		url = f"{self.base_url}/api/v1/packages/json/"
-		params = {
-			"waybill": awb,
-			"ref_ids": ""
-		}
+		ref_id = self._get_order_reference(doc)
+		params = {"ref_ids": ref_id}
 		headers = {
 			"Authorization": f"Token {self.api_token}",
 			"Content-Type": "application/json"
 		}
+		
+		log_status = "Error"
+		error_msg = ""
+		response_data = None
+		awb = None
+		
+		try:
+			response = requests.get(url, params=params, headers=headers)
+			response.raise_for_status()
+			response_data = response.json()
+			
+			# Response format: {"packages": [...]}
+			if response_data.get("packages") and len(response_data.get("packages")) > 0:
+				package = response_data.get("packages")[0]
+				if package.get("waybill") and not package.get("waybill").startswith("UPL"):
+					awb = package.get("waybill")
+					log_status = "Success"
+				else:
+					error_msg = f"Status: {package.get('status', 'Unknown')}. Remarks: {package.get('remarks', 'No remarks')}"
+			else:
+				# If we search by ref_ids and get nothing, it might not be processed yet or invalid.
+				error_msg = "No package found with this Reference ID."
+				
+		except Exception as e:
+			error_msg = str(e)
+			frappe.log_error(f"Delhivery Sync Error: {str(e)}", "Delhivery Integration")
+
+		# Log this check if meaningful (or maybe only if successful/error)
+		self._create_delivery_log(ref_id, {"action": "sync_status", "ref_id": ref_id}, response_data, log_status, awb, error_msg)
+		
+		if log_status == "Success":
+			return {
+				"success": True,
+				"awb": awb,
+				"status": "Booked",
+				"response": response_data
+			}
+		else:
+			return {
+				"success": False,
+				"error": error_msg
+			}
+
+	def _get_order_reference(self, doc):
+		"""Return the order reference for API (ref_ids / order in payload). Delivery Note uses SO from items."""
+		if doc.doctype == "Delivery Note":
+			for item in (doc.items or []):
+				if getattr(item, "against_sales_order", None):
+					return item.against_sales_order
+			frappe.throw(_("No linked Sales Order found in Delivery Note items. Set against_sales_order on at least one row."))
+		return doc.name
+
+	def _create_delivery_log(self, sales_order, request_payload, response_payload, status, awb, error):
+		try:
+			log = frappe.get_doc({
+				"doctype": "Delivery Log",
+				"sales_order": sales_order,
+				"status": status,
+				"awb_number": awb,
+				"error_message": error,
+				"request_payload": json.dumps(request_payload, indent=2) if request_payload else "",
+				"response_payload": json.dumps(response_payload, indent=2) if response_payload else ""
+			})
+			log.insert(ignore_permissions=True)
+		except Exception as e:
+			frappe.log_error(f"Failed to create Delivery Log: {str(e)}", "Delhivery Integration")
+
+	def _prepare_shipment_payload(self, doc, dimensions=None):
+		# Use customer_address from Delivery Note (or other doc), not shipping_address_name
+		if not getattr(doc, "customer_address", None):
+			frappe.throw(_("Customer Address is required"))
+
+		address = frappe.get_doc("Address", doc.customer_address)
+		if not address.pincode:
+			frappe.throw(_("Customer Address Pincode is required"))
+
+		order_ref = self._get_order_reference(doc)
+		
+		product_descriptions = []
+		total_qty = 0.0
+		total_weight_grams = 0.0
+		
+		for item in doc.items:
+			desc = item.item_name or item.item_code
+			if desc not in product_descriptions:
+				product_descriptions.append(desc)
+			total_qty += item.qty
+			w = getattr(item, "weight_per_unit", None) or 0.5
+			total_weight_grams += (w * item.qty) * 1000
+
+		products_desc_str = ", ".join(product_descriptions)
+		if len(products_desc_str) > 100:
+			products_desc_str = products_desc_str[:97] + "..."
+
+		if dimensions and "shipment_width" in dimensions and "shipment_height" in dimensions and "weight" in dimensions:
+			shipment_width = dimensions["shipment_width"]
+			shipment_height = dimensions["shipment_height"]
+			shipment_length = dimensions.get("shipment_length") or "10"
+			weight_str = dimensions["weight"]
+		else:
+			shipment_width = "10"
+			shipment_height = "10"
+			shipment_length = "10"
+			weight_str = str(int(total_weight_grams))
+
+		payment_mode = "Prepaid"
+		cod_amount = "0.00"
+		is_cod = False
+		if getattr(doc, "is_cod", None):
+			is_cod = True
+		elif getattr(doc, "payment_terms_template", None):
+			try:
+				term_template = frappe.get_doc("Payment Terms Template", doc.payment_terms_template)
+				if term_template and ("COD" in (term_template.template_name or "").upper() or "CASH" in (term_template.template_name or "").upper()):
+					is_cod = True
+			except Exception:
+				pass
+		if is_cod:
+			payment_mode = "COD"
+			cod_amount = str(float(getattr(doc, "rounded_total", 0) or 0))
+
+		pickup_loc_name = self.pickup_location
+		phone = (address.phone or getattr(doc, "contact_mobile", None) or getattr(doc, "contact_phone", None) or "").strip()
+		if not phone:
+			phone = "9999999999"
+
+		payload = {
+			"shipments": [
+				{
+					"name": doc.customer_name or getattr(doc, "contact_person", None) or "Customer",
+					"add": self._format_address(address),
+					"pin": address.pincode,
+					"city": address.city,
+					"state": address.state,
+					"country": address.country or "India",
+					"phone": phone,
+					"order": order_ref,
+					"payment_mode": payment_mode,
+					"products_desc": products_desc_str,
+					"quantity": str(int(total_qty)),
+					"total_amount": str(float(getattr(doc, "rounded_total", 0) or 0)),
+					"cod_amount": cod_amount,
+					"shipment_width": shipment_width,
+					"shipment_height": shipment_height,
+					"shipment_length": shipment_length,
+					"weight": weight_str,
+					"shipping_mode": "Surface"
+				}
+			],
+			"pickup_location": {
+				"name": pickup_loc_name
+			}
+		}
+		return payload
+
+	def _format_address(self, address):
+		parts = [address.address_line1, address.address_line2]
+		return ", ".join([p for p in parts if p])
+
+	def track_shipment(self, awb):
+		"""
+		Track shipment strictly using:
+		GET /api/v1/packages/json/?waybill=<AWB>
+		"""
+		url = f"{self.base_url}/api/v1/packages/json/"
+		params = {"waybill": awb}
+		headers = {
+			"Authorization": f"Token {self.api_token}",
+			"Content-Type": "application/json"
+		}
+		
 		try:
 			response = requests.get(url, params=params, headers=headers)
 			response.raise_for_status()
 			return response.json()
 		except Exception as e:
-			frappe.log_error(f"Delhivery Tracking Failed: {str(e)}", "Delhivery Integration")
+			frappe.log_error(f"Delhivery Track Error: {str(e)}", "Delhivery Integration")
 			return None
 
 	def download_packing_slip(self, awb):
 		"""
-		Download shipping label/packing slip.
-		User provided: https://staging-express.delhivery.com/api/p/packing_slip?wbns=...&pdf=true&pdf_size=4R
+		Get packing slip label URL from Delhivery.
+		Step 1: GET /api/p/packing_slip?wbns=<AWB>&pdf=true&pdf_size=4R
+		        Returns JSON: {"packages":[{"pdf_download_link":"https://..."}]}
+		Step 2: Return pdf_download_link - client opens URL directly (avoids PDF validation issues).
+		Postman: (1) GET packing_slip API -> (2) Copy pdf_download_link -> (3) GET that URL for PDF.
 		"""
 		url = f"{self.base_url}/api/p/packing_slip"
 		params = {
@@ -177,38 +326,33 @@ class DelhiveryService:
 			"pdf_size": "4R"
 		}
 		headers = {
-			"Authorization": f"Token {self.api_token}",
-			"Content-Type": "application/json"
+			"Authorization": f"Token {self.api_token}"
 		}
-		
+
 		try:
 			response = requests.get(url, params=params, headers=headers)
 			response.raise_for_status()
-			
-			# If response is PDF content, we should return it or save it
-			# We'll return the raw content and let the caller handle it (e.g. attach to doc)
-			return {
-				"success": True,
-				"content": response.content,
-				"content_type": response.headers.get("Content-Type", "application/pdf")
-			}
-		except Exception as e:
-			frappe.log_error(f"Delhivery Packing Slip Failed: {str(e)}", "Delhivery Integration")
-			return {"success": False, "error": str(e)}
 
-	def cancel_shipment(self, awb):
-		url = f"{self.base_url}/api/p/edit"
-		headers = {
-			"Authorization": f"Token {self.api_token}",
-			"Content-Type": "application/json"
-		}
-		data = {
-			"waybill": awb,
-			"cancellation": "true"
-		}
-		try:
-			response = requests.post(url, json=data, headers=headers)
-			return response.json()
+			content_type = response.headers.get("Content-Type", "") or ""
+			if "application/json" in content_type or (response.text or "").strip().startswith("{"):
+				data = response.json()
+				packages = data.get("packages") or []
+				if not packages:
+					return {"success": False, "error": _("No label link in Delhivery response.")}
+				pdf_link = packages[0].get("pdf_download_link")
+				if not pdf_link:
+					return {"success": False, "error": _("PDF download link not found in Delhivery response.")}
+				# Return URL directly - client opens in new tab. Avoids Frappe File PDF validation.
+				return {"success": True, "pdf_url": pdf_link}
+			else:
+				# Fallback: API returns raw PDF
+				content = response.content or b""
+				if content.startswith(b"%PDF"):
+					return {"success": True, "content": content, "content_type": "application/pdf"}
+				return {"success": False, "error": _("Unexpected response from Delhivery.")}
+		except requests.exceptions.RequestException as e:
+			frappe.log_error("Delhivery Label Error: {0}".format(str(e)), "Delhivery Integration")
+			return {"success": False, "error": str(e)}
 		except Exception as e:
-			frappe.log_error(f"Delhivery Cancellation Failed: {str(e)}", "Delhivery Integration")
-			return {"status": "Failed", "error": str(e)}
+			frappe.log_error("Delhivery Label Error: {0}".format(str(e)), "Delhivery Integration")
+			return {"success": False, "error": str(e)}

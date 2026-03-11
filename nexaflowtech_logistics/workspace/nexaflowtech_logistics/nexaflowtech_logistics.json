@@ -1,0 +1,55 @@
+{
+ "charts": [],
+ "component": "list",
+ "content": [
+  {
+   "type": "header",
+   "data": {
+    "text": "Nexaflowtech Logistics",
+    "level": 1,
+    "col": 12
+   }
+  }
+ ],
+ "creation": "2024-05-22 10:00:00.000000",
+ "custom_blocks": [],
+ "docstatus": 0,
+ "doctype": "Workspace",
+ "file_type": "json",
+ "idx": 0,
+ "indicator_color": "blue",
+ "is_standard": 1,
+ "label": "Nexaflowtech Logistics",
+ "links": [],
+ "modified": "2024-05-22 10:00:00.000000",
+ "modified_by": "Administrator",
+ "module": "Nexaflowtech Logistics",
+ "name": "Nexaflowtech Logistics",
+ "number_cards": [],
+ "owner": "Administrator",
+ "parent_d2": "Modules",
+ "public": 1,
+ "roles": [
+  {
+   "role": "System Manager"
+  },
+  {
+   "role": "Logistics Manager"
+  }
+ ],
+ "sequence_id": 1.0,
+ "shortcuts": [
+  {
+   "color": "Blue",
+   "doc_view": "Form",
+   "format": "{}?name=Logistics Settings",
+   "icon": "setting",
+   "label": "Logistics Settings",
+   "link_to": "Logistics Settings",
+   "stats_filter": "[]",
+   "type": "DocType",
+   "url": ""
+  }
+ ],
+ "title": "Nexaflowtech Logistics"
+}
